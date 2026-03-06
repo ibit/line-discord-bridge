@@ -28,31 +28,32 @@ def get_display_name(user_id: str) -> str:
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    body = await request.body()
-    sig  = request.headers.get("X-Line-Signature", "")
+    try:
+        body = await request.body()
+        sig  = request.headers.get("X-Line-Signature", "")
+        
+        print(f"[DEBUG] Webhook received, sig_len={len(sig)}, body_len={len(body)}")
+        
+        if not verify_signature(body, sig):
+            print("[ERROR] 署名検証失敗")
+            raise HTTPException(status_code=403)
+
+        for event in json.loads(body).get("events", []):
+            source = event.get("source", {})
+            if source.get("type") == "group" and not LINE_GROUP_ID:
+                print(f"[GROUP ID] {source.get('groupId')}")
+            if event.get("type") == "message" and event["message"]["type"] == "text":
+                name = get_display_name(source.get("userId", ""))
+                text = event["message"]["text"]
+                requests.post(DISCORD_WEBHOOK, json={
+                    "username": f"[LINE] {name}",
+                    "content": text
+                })
+
+        return {"status": "ok"}
     
-    print(f"[DEBUG] Webhook received, sig={'あり' if sig else 'なし'}, body_len={len(body)}")
-    
-    if not LINE_SECRET:
-        print("[ERROR] LINE_CHANNEL_SECRET が未設定")
-        raise HTTPException(status_code=500)
-    
-    if not verify_signature(body, sig):
-        print("[ERROR] 署名検証失敗")
-        raise HTTPException(status_code=403)
-
-    for event in json.loads(body).get("events", []):
-        source = event.get("source", {})
-
-        if source.get("type") == "group" and not LINE_GROUP_ID:
-            print(f"[GROUP ID] {source.get('groupId')}")
-
-        if event.get("type") == "message" and event["message"]["type"] == "text":
-            name = get_display_name(source.get("userId", ""))
-            text = event["message"]["text"]
-            requests.post(DISCORD_WEBHOOK, json={
-                "username": f"[LINE] {name}",
-                "content": text
-            })
-
-    return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[EXCEPTION] {type(e).__name__}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
