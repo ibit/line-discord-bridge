@@ -4,12 +4,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-LINE_SECRET     = os.getenv("LINE_CHANNEL_SECRET")
-LINE_TOKEN      = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_GROUP_ID   = os.getenv("LINE_GROUP_ID")
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
+LINE_SECRET     = os.getenv("LINE_CHANNEL_SECRET", "").strip()
+LINE_TOKEN      = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+LINE_GROUP_ID   = os.getenv("LINE_GROUP_ID", "").strip()
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
 
 app = FastAPI()
+
+# 起動時に変数が読めているか確認
+print(f"[DEBUG] SECRET={'OK' if LINE_SECRET else 'NG'}, TOKEN={'OK' if LINE_TOKEN else 'NG'}, WEBHOOK={'OK' if DISCORD_WEBHOOK else 'NG'}")
 
 def verify_signature(body: bytes, sig: str) -> bool:
     h = hmac.new(LINE_SECRET.encode(), body, hashlib.sha256).digest()
@@ -17,7 +20,6 @@ def verify_signature(body: bytes, sig: str) -> bool:
 
 def get_display_name(user_id: str) -> str:
     headers = {"Authorization": f"Bearer {LINE_TOKEN}"}
-    # グループメンバーのプロフィール取得
     r = requests.get(
         f"https://api.line.me/v2/bot/group/{LINE_GROUP_ID}/member/{user_id}",
         headers=headers
@@ -28,17 +30,23 @@ def get_display_name(user_id: str) -> str:
 async def webhook(request: Request):
     body = await request.body()
     sig  = request.headers.get("X-Line-Signature", "")
+    
+    print(f"[DEBUG] Webhook received, sig={'あり' if sig else 'なし'}, body_len={len(body)}")
+    
+    if not LINE_SECRET:
+        print("[ERROR] LINE_CHANNEL_SECRET が未設定")
+        raise HTTPException(status_code=500)
+    
     if not verify_signature(body, sig):
+        print("[ERROR] 署名検証失敗")
         raise HTTPException(status_code=403)
 
     for event in json.loads(body).get("events", []):
         source = event.get("source", {})
 
-        # グループIDをまだ取得していない場合はログに出す
         if source.get("type") == "group" and not LINE_GROUP_ID:
             print(f"[GROUP ID] {source.get('groupId')}")
 
-        # テキストメッセージだけ処理
         if event.get("type") == "message" and event["message"]["type"] == "text":
             name = get_display_name(source.get("userId", ""))
             text = event["message"]["text"]
